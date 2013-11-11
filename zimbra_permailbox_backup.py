@@ -12,6 +12,7 @@ import urllib2
 from pynsca import NSCANotifier
 import requests
 import logging
+import mmap
 
 # config START
 ## LDAP Auth
@@ -282,9 +283,10 @@ def zimbra_restore_account(site,date,mailaccbackup,restoreaccount):
 			msg="Running a restore to account "+restoreaccount+" on "+site+" using backup "+backuptorestore
 			print msg
 			logging.info(msg)
-			upload = {'file': open(backuptorestore, 'rb')}
-			url = 'https://'+site+':7071/home/'+restoreaccount+'/?fmt=tgz&resolve=skip'
-			do_it = requests.post(url, files=upload, auth=('admin', zimbraauths[site]))
+			upload=open(backuptorestore, 'rb')
+                        mmapped_file_as_string = mmap.mmap(upload.fileno(), 0, access=mmap.ACCESS_READ)
+                        url = 'https://'+site+':7071/home/'+restoreaccount+'/?fmt=tgz&resolve=skip'
+                        do_it = requests.post(url, data=mmapped_file_as_string, auth=('admin', zimbraauths[site]))
 			if do_it.status_code == 200:
 				print "Restore complete"
 			else:
