@@ -284,9 +284,14 @@ def zimbra_restore_account(site,date,mailaccbackup,restoreaccount):
 			print msg
 			logging.info(msg)
 			upload=open(backuptorestore, 'rb')
-                        mmapped_file_as_string = mmap.mmap(upload.fileno(), 0, access=mmap.ACCESS_READ)
-                        url = 'https://'+site+':7071/home/'+restoreaccount+'/?fmt=tgz&resolve=skip'
-                        do_it = requests.post(url, data=mmapped_file_as_string, auth=('admin', zimbraauths[site]))
+			try:
+				mmapped_file_as_string = mmap.mmap(upload.fileno(), 0, access=mmap.ACCESS_READ)
+	                        url = 'https://'+site+':7071/home/'+restoreaccount+'/?fmt=tgz&resolve=skip'
+        	                do_it = requests.post(url, data=mmapped_file_as_string, auth=('admin', zimbraauths[site]))
+			except ValueError as e:
+				print e
+				print "Possible Memory issue! If you restoring large mailboxes you probably need to run this from a 64bit machine!"
+				sys.exit(1)
 			if do_it.status_code == 200:
 				print "Restore complete"
 			else:
