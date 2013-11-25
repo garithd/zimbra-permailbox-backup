@@ -193,7 +193,13 @@ def zimbra_retrieve_all_accounts(site,binddn,passwd):
         for item in search:
 		if item[1].values():
 			formatoutput.extend(item[1].values()[0])
-        return formatoutput
+			
+	if not formatoutput:
+		logging.info("Unable to retrieve any accounts from LDAP - auth issue?")
+		print "Unable to retrieve any accounts from LDAP - auth issue?"
+		sys.exit(1)
+	else:
+		return formatoutput
 
 def zimbra_backupall(site,report):
 	logging.info("Starting full backup of site: "+site)
