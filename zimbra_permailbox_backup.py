@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# written by garith dugmore on Sat Oct 12 09:50:47 SAST 2013
 # Zimbra backup per mailbox
 
 import os, sys, getopt
@@ -13,40 +14,50 @@ from pynsca import NSCANotifier
 import requests
 import logging
 import mmap
+import ConfigParser
 
-# config START
-## LDAP Auth
-auths= {
-	# eg. "mailserver.example.com":"ldapsecret",
-	"FQDN_OF_MAILSERVER_1":"PASSWORD",
-	"FQDN_OF_MAILSERVER_2":"PASSWORD"
-}
+def ConfigSectionMap(section):
+    dict1 = {}
+    options = Config.options(section)
+    for option in options:
+        try:
+            dict1[option] = Config.get(section, option)
+            if dict1[option] == -1:
+                DebugPrint("skip: %s" % option)
+        except:
+            print("exception on %s!" % option)
+            dict1[option] = None
+    return dict1
 
-## Zimbra admin login. Login for https://mailserver.example.com:7071
-zimbraauths= {
-	# eg. "mailserver.example.com":"adminsecret"
-	"FQDN_OF_MAILSERVER_1":"PASSWORD",
-	"FQDN_OF_MAILSERVER_2":"PASSWORD"
-}
+def config_load(configfile):
+	global Config
 
-## OPTIONAL: NSCA enabled (passive checks) nagios server config
-nagioshosts= {
-	# eg. "mailserver.example.com":"monitor.sub.example.com",
-	"FQDN_OF_MAILSERVER_1":"FQDN_OF_NAGIOS_SERVER_1",
-	"FQDN_OF_MAILSERVER_2":"FQDN_OF_NAGIOS_SERVER_2"
-}
+	Config = ConfigParser.ConfigParser()
+	Config.read(configfile)
 
-## OPTIONAL: Nagios service. The passive check enabled service configured in nagios
-service="mailbox_backups"
+	authsconfig = ConfigSectionMap("auths")
+	zimbraauthsconfig = ConfigSectionMap("zimbraauths")
+	nagioshostsconfig = ConfigSectionMap("nagioshosts")
+	mailbackupdirconfig = ConfigSectionMap("backupdir")["mailbackuptopdir"]
 
-## Backup directory. Where the backups go.
-mailbackuptopdir="/mailbackups/"
+	return authsconfig, zimbraauthsconfig, nagioshostsconfig, mailbackupdirconfig
 
-## Logfile. Add to logrotate?
+def file_exists_and_non_zero(file):
+	try:
+		os.path.getsize(file) > 0
+	except:
+		return False
+	return True
+
+# load config first
+configfile='/etc/zimbra_permailbox_backup.conf'
+if file_exists_and_non_zero(configfile):
+	auths, zimbraauths, nagioshosts, mailbackupdir = config_load(configfile)
+else:
+	print "Config file '"+configfile+"' is missing. Grab an example from https://github.com/garithd/zimbra-permailbox-backup"
+	sys.exit(1)
+
 logfile='/var/log/zimbra_permailbox_backup.log'
-
-# config END
-
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p',filename=logfile,level=logging.DEBUG)
 
 import commands
@@ -112,12 +123,6 @@ def date_valid(yyyymmdd):
 	except ValueError:
 		return False
 
-def file_exists_and_non_zero(file):
-	try:
-		os.path.getsize(file) > 0
-	except:
-		return False
-	return True
 
 def find_files_matching(name, path):
 	result = []
@@ -162,6 +167,9 @@ def zimbra_backup_per_mailbox(site,mailaccount,outputdir):
         		tries += 1
 		        time.sleep(delay)
 			logging.info("Account: "+mailaccount+". Problem connecting during backup. Attempts: "+str(tries))
+		except (NameError, KeyError):
+			print "Check your 'zimbraauths' section in your config. Auth failed for '"+site+"'"
+			sys.exit(1)
 		except Exception, error:
     			logging.exception(error)
         		tries += 1
@@ -186,20 +194,14 @@ def zimbra_retrieve_all_accounts(site,binddn,passwd):
 	        l.simple_bind_s(binddn,passwd)
                 search=l.search_s("",ldap.SCOPE_SUBTREE, "(zimbraMailHost="+site+")", ["zimbraMailDeliveryAddress"])
         except:
-		error="Retrieving Zimbra accounts from "+site+" failed"
+		error="Retrieving Zimbra accounts from "+site+" failed. Check your configuration set in "+configfile
                 print error
 		logging.info(error)
-                return False
+                sys.exit(1)
         for item in search:
 		if item[1].values():
 			formatoutput.extend(item[1].values()[0])
-			
-	if not formatoutput:
-		logging.info("Unable to retrieve any accounts from LDAP - auth issue?")
-		print "Unable to retrieve any accounts from LDAP - auth issue?"
-		sys.exit(1)
-	else:
-		return formatoutput
+        return formatoutput
 
 def zimbra_backupall(site,report):
 	logging.info("Starting full backup of site: "+site)
@@ -222,6 +224,11 @@ def zimbra_backupall(site,report):
 					firstfailedacc=account
 				else:
 					failedcount += 1
+	else:
+		error="No accounts retrieved from '"+site+"'. Authentication issue? Check your config."
+		logging.info(error)
+		print error
+		sys.exit(1)
 
 	# report to Nagios or to terminal
 	percent=percentage(numbackedup,numaccounts)
@@ -229,7 +236,7 @@ def zimbra_backupall(site,report):
 	logging.info(msg+" - first failed backup: "+str(firstfailedacc))
 	if report == "yes":
 		if numaccounts == numbackedup:
-			if nagios_passive_report(nagioshosts[site],site,service,0,msg):
+			if nagios_passive_report(nagioshosts[site],site,"mailbox_backups",0,msg):
 				sys.exit(0)
 			else:
 				print "Failed to send report to nagios host: "+nagioshosts[site]+"\n"+msg
@@ -240,7 +247,7 @@ def zimbra_backupall(site,report):
 			else:
 				status=1
 
-			if nagios_passive_report(nagioshosts[site],site,service,status,msg+" - first failed backup: "+str(firstfailedacc)+" Log: "+nagioshosts[site]+":"+logfile):
+			if nagios_passive_report(nagioshosts[site],site,"mailbox_backups",status,msg+" - first failed backup: "+str(firstfailedacc)+" Log: "+nagioshosts[site]+":"+logfile):
                                 sys.exit(0)
                         else:  
                                 print "Failed to send report to nagios host: "+nagioshosts[site]+"\n"+msg
@@ -256,8 +263,11 @@ def zimbra_backupall(site,report):
 			sys.exit(1)
 
 def percentage(part, whole):
-	return 100 * float(part)/float(whole)
-				
+	if whole or part == 0:
+                return 0
+        else:
+                return 100 * float(part)/float(whole)
+
 def nagios_passive_report(host,monitoredhost,service,level,message):
 	# use nsca to report to nagios
 	status={0:"OK: ",1:"WARNING: ",2:"CRITICAL: "}
@@ -270,7 +280,7 @@ def nagios_passive_report(host,monitoredhost,service,level,message):
 
 def zimbra_account_exists(site,account):
 	accounts=zimbra_retrieve_all_accounts(site,"uid=zimbra,cn=admins,cn=zimbra",auths[site])
-	if account in accounts:
+	if accounts:
 		return True
 	else:
 		return False
@@ -290,21 +300,16 @@ def zimbra_restore_account(site,date,mailaccbackup,restoreaccount):
 			print msg
 			logging.info(msg)
 			upload=open(backuptorestore, 'rb')
-			try:
-				mmapped_file_as_string = mmap.mmap(upload.fileno(), 0, access=mmap.ACCESS_READ)
-	                        url = 'https://'+site+':7071/home/'+restoreaccount+'/?fmt=tgz&resolve=skip'
-        	                do_it = requests.post(url, data=mmapped_file_as_string, auth=('admin', zimbraauths[site]))
-			except ValueError as e:
-				print e
-				print "Possible Memory issue! If you restoring large mailboxes you probably need to run this from a 64bit machine!"
-				sys.exit(1)
+                        mmapped_file_as_string = mmap.mmap(upload.fileno(), 0, access=mmap.ACCESS_READ)
+                        url = 'https://'+site+':7071/home/'+restoreaccount+'/?fmt=tgz&resolve=skip'
+                        do_it = requests.post(url, data=mmapped_file_as_string, auth=('admin', zimbraauths[site]))
+
 			if do_it.status_code == 200:
 				print "Restore complete"
 			else:
 				errmsg="Restore failed with http error code: "+str(do_it.status_code)
 				print errmsg
 				logging.info(errmsg)
-	
 		else:
 			print backuptorestore+" does not exist or is empty"
 			sys.exit(1)
@@ -359,6 +364,7 @@ def zimbra_delete_old_backups(site):
 	if len(backupstokeep) > 30:
 		for backup in existingbackups:
 			if not backup in backupstokeep:
+				logging.info("Deleting '"+mailbackupdir+backup+"'")
 				shutil.rmtree(mailbackupdir+backup)
 
 def date_range(start_date, end_date):
@@ -388,19 +394,19 @@ def file_list_all_in_dir_recursively(dir):
 # Help
 def main(argv):
 	helptext='Usage:\n\t\
-	-b [all|"bob@domain"] \t# backup mail account\n\t\
-	-r "bob@domain" \t\t# account to restore backup from\n\t\
-	-t "bobrestore@domain" \t# account to restore to\n\t\
-	-z \t\t\t\t# only valid for "-b all" - report status to nagios\n\t\
-	-s [MAILSERVER1|MAILSERVER2] \t# site name\n\t\
-	-d ["20130606"|list] \t\t# date - used to specify which backup to restore\n\t\t\t\t\t\
+	-b [all|"user1@domain.com"] \t\t# backup mail account\n\t\
+	-r "user1@domain.com" \t\t\t# account to restore backup from\n\t\
+	-t "user2@domain.com" \t\t\t# account to restore to\n\t\
+	-z \t\t\t\t\t# only valid for "-b all" - report status to nagios\n\t\
+	-s [site1.domain.com|site2.domain.com] \t# zimbra server name\n\t\
+	-d ["20130606"|list] \t\t\t# date - used to specify which backup to restore\n\t\t\t\t\t\t\
 	# or "list" to output all possible restores for specified account\n\t\
-	-x \t\t\t\t# delete old backups - we keep 6 monthlys, 4 weeklys, 7 dailys per mailbox.\n\t\
+	-x \t\t\t\t\t# delete old backups - we keep 6 monthlys, 4 weeklys, 7 dailys per mailbox.\n\t\
 	-h # help\n\n\
-	eg. '+(__file__)+' -b bob@domain -s MAILSERVER1\n\
-	eg. '+(__file__)+' -b all -s MAILSERVER1 -z\n\
-	eg. '+(__file__)+' -r bob@domain -t bobrestore@domain -d 20130905 -s MAILSERVER1\n\
-	eg. '+(__file__)+' -r bob@domain -d list -s MAILSERVER1\n'
+	eg. '+(__file__)+' -b user1@domain.com -s site1.domain.com\n\
+	eg. '+(__file__)+' -b all -s site1.domain.com -z\n\
+	eg. '+(__file__)+' -r user1@domain.com -t user2@domain.com -d 20130905 -s site1.domain.com\n\
+	eg. '+(__file__)+' -r user1@domain.com -d list -s site1.domain.com\n'
 
 	date=''
 	mailaccount=''
@@ -409,6 +415,7 @@ def main(argv):
 	report='no'
 	backupall=''
 	restoreaccount=''
+	global mailbackupdir
 	try:
 		opts, args = getopt.getopt(argv,"hb:r:azs:d:t:x")
 	except getopt.GetoptError:
@@ -424,8 +431,7 @@ def main(argv):
 		elif opt in ('-s'):
 			if arg in auths.keys():
 				mailserver=arg
-				global mailbackupdir
-				mailbackupdir=mailbackuptopdir+mailserver.split(".")[0]+"/mailboxes/"
+				mailbackupdir=mailbackupdir+mailserver.split(".")[0]+"/mailboxes/"
 			else:
 				print "Invalid site "+"'"+arg+"'"+"\n\n"+helptext
 				sys.exit(1)
