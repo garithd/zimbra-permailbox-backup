@@ -263,7 +263,7 @@ def zimbra_backupall(site,report):
 			sys.exit(1)
 
 def percentage(part, whole):
-	if whole or part == 0:
+	if whole ==0 or part == 0:
                 return 0
         else:
                 return 100 * float(part)/float(whole)
