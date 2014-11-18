@@ -432,7 +432,7 @@ def main(argv):
 		elif opt in ('-s'):
 			if arg in auths.keys():
 				mailserver=arg
-				mailbackupdir=mailbackupdir+mailserver.split(".")[0]+"/mailboxes/"
+				mailbackupdir=mailbackupdir+mailserver+"/mailboxes/"
 			else:
 				print "Invalid site "+"'"+arg+"'"+"\n\n"+helptext
 				sys.exit(1)
