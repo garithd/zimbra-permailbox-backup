@@ -164,10 +164,10 @@ def zimbra_backup_per_mailbox(site,mailaccount,outputdir):
 			dl = urllib2.urlopen(req, timeout=60)
 			with open(output, 'wb') as fp:
 	       			shutil.copyfileobj(dl, fp)
-		except urllib2.URLError:
+		except urllib2.URLError, error:
         		tries += 1
 		        time.sleep(delay)
-			logging.info("Account: "+mailaccount+". Problem connecting during backup. Attempts: "+str(tries))
+			logging.info("Account: "+mailaccount+". Problem connecting during backup: "+str(error)+" Attempts: "+str(tries))
 		except (NameError, KeyError):
 			print "Check your 'zimbraauths' section in your config. Auth failed for '"+site+"'"
 			sys.exit(1)
